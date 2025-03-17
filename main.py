@@ -10,6 +10,10 @@ import random
 import hashlib
 from rapidfuzz import fuzz  # Pour le fuzzy matching (facultatif)
 from datetime import datetime, timedelta
+from flask import Flask
+from threading import Thread
+import os
+
 
 # Chargement des variables d'environnement
 load_dotenv()
@@ -546,4 +550,21 @@ async def amour(interaction: discord.Interaction, pseudo1: str, pseudo2: str):
     response_text = f"La probabilité d'amour entre **{pseudo1}** et **{pseudo2}** est de **{prob}%**. {comment}"
     await interaction.response.send_message(response_text)
 
+
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Je suis en ligne !"
+
+def run():
+    app.run(host='0.0.0.0', port=int(os.getenv("PORT", 10000)))
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+keep_alive()
 client.run(DISCORD_TOKEN)
+
