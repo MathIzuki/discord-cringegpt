@@ -613,6 +613,9 @@ async def suppanniv(interaction: discord.Interaction, member: discord.Member):
 @client.tree.command(name="listeanniversaire", description="Affiche la liste de tous les anniversaires enregistrés.")
 async def listeanniversaire(interaction: discord.Interaction):
     # Recharge les données des anniversaires depuis le fichier pour être à jour
+    if not is_admin(interaction):
+        await interaction.response.send_message("Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
     global birthdays
     birthdays = load_birthdays()
     if not birthdays:
