@@ -17,6 +17,7 @@ import os
 
 # Chargement des variables d'environnement
 load_dotenv()
+BIRTHDAY_CHANNEL_ID = int(os.getenv("BIRTHDAY_CHANNEL_ID", "0"))
 BIRTHDAY_FILE = "birthdays.json"
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -632,6 +633,45 @@ async def listeanniversaire(interaction: discord.Interaction):
         color=0x3498db
     )
     await interaction.response.send_message(embed=embed)
+
+# Tâche d'anniversaire : vérifie quotidiennement et envoie un message dans le salon dédié
+async def birthday_check():
+    await client.wait_until_ready()
+    channel = client.get_channel(BIRTHDAY_CHANNEL_ID)
+    if channel is None:
+        try:
+            channel = await client.fetch_channel(BIRTHDAY_CHANNEL_ID)
+        except Exception as e:
+            print(f"Erreur lors de la récupération du salon d'anniversaire: {e}", flush=True)
+            return
+    announced_today = set()
+    last_dm = None
+    while not client.is_closed():
+        now = datetime.now()
+        today_dm = now.strftime("%d/%m")
+        # Réinitialiser la liste des annonces si la date change
+        if last_dm != today_dm:
+            announced_today = set()
+            last_dm = today_dm
+        for user_id, birth_date in birthdays.items():
+            try:
+                bdate = datetime.strptime(birth_date, "%d/%m/%Y")
+            except Exception as e:
+                print(f"Erreur de parsing pour l'anniversaire de {user_id}: {e}", flush=True)
+                continue
+            if bdate.strftime("%d/%m") == today_dm and user_id not in announced_today:
+                age = now.year - bdate.year
+                message_text = f"Joyeux anniversaire <@{user_id}> ! Tu as désormais {age} ans !"
+                try:
+                    await channel.send(message_text)
+                    announced_today.add(user_id)
+                except Exception as e:
+                    print(f"Erreur lors de l'envoi du message d'anniversaire pour <@{user_id}>: {e}", flush=True)
+        await asyncio.sleep(60)  # Vérification toutes les minutes
+
+client.loop.create_task(birthday_check())
+
+
 
 app = Flask('')
 
