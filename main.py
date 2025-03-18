@@ -502,33 +502,7 @@ async def event(interaction: discord.Interaction, title: str, date: str, time: s
     event_message = await interaction.original_response()
     await event_message.add_reaction("✅")
     await event_message.add_reaction("❌")
-    
-    # Mise à jour périodique du compte à rebours toutes les 10 minutes
-    async def update_countdown():
-        while True:
-            now = datetime.now()
-            if event_dt > now:
-                delta = event_dt - now
-                days = delta.days
-                hours, remainder = divmod(delta.seconds, 3600)
-                minutes = remainder // 60
-                new_countdown = f"{days} jours, {hours} heures, {minutes} minutes"
-            else:
-                new_countdown = "L'événement a déjà eu lieu."
-                embed.set_field_at(2, name="Compte à rebours", value=new_countdown, inline=False)
-                try:
-                    await event_message.edit(embed=embed)
-                except Exception as e:
-                    print(f"Erreur lors de la mise à jour du compte à rebours: {e}", flush=True)
-                break
-            embed.set_field_at(2, name="Compte à rebours", value=new_countdown, inline=False)
-            try:
-                await event_message.edit(embed=embed)
-            except Exception as e:
-                print(f"Erreur lors de la mise à jour du compte à rebours: {e}", flush=True)
-            await asyncio.sleep(600)  # Met à jour toutes les 10 minutes
 
-    client.loop.create_task(update_countdown())
 
     # Mise à jour périodique du compte à rebours (toutes les 10 minutes)
     async def update_countdown():
@@ -610,23 +584,40 @@ async def suppanniv(interaction: discord.Interaction, member: discord.Member):
     removed_date = birthdays.pop(str(member.id))
     save_birthdays(birthdays)
     await interaction.response.send_message(f"L'anniversaire de {member.mention} ({removed_date}) a été supprimé.", ephemeral=True)
-
-@client.tree.command(name="listeanniversaire", description="Affiche la liste de tous les anniversaires enregistrés.")
+@client.tree.command(name="listeanniversaire", description="Affiche la liste de tous les anniversaires enregistrés, triés par prochain anniversaire.")
 async def listeanniversaire(interaction: discord.Interaction):
-    # Recharge les données des anniversaires depuis le fichier pour être à jour
     if not is_admin(interaction):
         await interaction.response.send_message("Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
         return
+
     global birthdays
-    birthdays = load_birthdays()
+    birthdays = load_birthdays()  # Recharge les données à jour
     if not birthdays:
         await interaction.response.send_message("Aucun anniversaire n'a été enregistré.", ephemeral=True)
         return
 
-    description = ""
+    today = datetime.today()
+    # Construire une liste avec le prochain anniversaire de chaque utilisateur
+    sorted_birthdays = []
     for user_id, birth_date in birthdays.items():
-        description += f"<@{user_id}> : {birth_date}\n"
-        
+        try:
+            bdate = datetime.strptime(birth_date, "%d/%m/%Y")
+        except Exception as e:
+            continue
+        # Calculer le prochain anniversaire
+        next_birthday = bdate.replace(year=today.year)
+        if next_birthday < today:
+            next_birthday = bdate.replace(year=today.year + 1)
+        sorted_birthdays.append((user_id, birth_date, next_birthday))
+    
+    # Trier la liste par date du prochain anniversaire
+    sorted_birthdays.sort(key=lambda x: x[2])
+    
+    description = ""
+    for user_id, birth_date, next_birthday in sorted_birthdays:
+        days_until = (next_birthday - today).days
+        description += f"<@{user_id}> : {birth_date} (dans {days_until + 1} jours)\n"
+    
     embed = discord.Embed(
         title="Liste des anniversaires",
         description=description,
@@ -669,7 +660,11 @@ async def birthday_check():
                     print(f"Erreur lors de l'envoi du message d'anniversaire pour <@{user_id}>: {e}", flush=True)
         await asyncio.sleep(60)  # Vérification toutes les minutes
 
-client.loop.create_task(birthday_check())
+@client.event
+async def on_ready():
+    print(f"{client.user} est connecté et prêt.")
+    asyncio.create_task(birthday_check())
+
 
 
 
