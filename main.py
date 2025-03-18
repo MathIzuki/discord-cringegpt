@@ -17,6 +17,7 @@ import os
 
 # Chargement des variables d'environnement
 load_dotenv()
+BIRTHDAY_FILE = "birthdays.json"
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "0"))
@@ -51,6 +52,29 @@ def save_forbidden_words(words):
 
 # Chargement initial de la liste
 forbidden_words = load_forbidden_words()
+
+
+def load_birthdays():
+    try:
+        with open(BIRTHDAY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        print("Anniversaires chargés :", data, flush=True)
+        return data
+    except Exception as e:
+        print("Erreur lors du chargement de birthdays.json :", e, flush=True)
+        return {}
+
+def save_birthdays(birthdays):
+    try:
+        with open(BIRTHDAY_FILE, "w", encoding="utf-8") as f:
+            json.dump(birthdays, f, ensure_ascii=False, indent=4)
+        print("Anniversaires sauvegardés :", birthdays, flush=True)
+    except Exception as e:
+        print("Erreur lors de la sauvegarde de birthdays.json :", e, flush=True)
+
+# Chargement initial des anniversaires
+birthdays = load_birthdays()
+
 
 # Fonction de normalisation pour contrer l'obfuscation
 def normalize_text(text):
@@ -551,6 +575,40 @@ async def amour(interaction: discord.Interaction, pseudo1: str, pseudo2: str):
     await interaction.response.send_message(response_text)
 
 
+# Commande slash /ajoutanniv pour que l'utilisateur ajoute son anniversaire
+@client.tree.command(name="ajoutanniv", description="Ajoute votre anniversaire. Format: DD/MM/YYYY")
+async def ajoutanniv(interaction: discord.Interaction, date: str):
+    """
+    Enregistre l'anniversaire de l'utilisateur qui exécute la commande.
+    Format attendu pour la date : DD/MM/YYYY.
+    """
+    try:
+        # On vérifie le format de la date
+        birth_dt = datetime.strptime(date, "%d/%m/%Y")
+    except Exception as e:
+        await interaction.response.send_message("Format de date invalide. Utilisez DD/MM/YYYY.", ephemeral=True)
+        return
+    # Enregistrer l'anniversaire sous la clé de l'ID de l'utilisateur
+    birthdays[str(interaction.user.id)] = date
+    save_birthdays(birthdays)
+    await interaction.response.send_message(f"Votre anniversaire ({date}) a été ajouté avec succès !", ephemeral=True)
+
+# Commande slash /suppanniv pour que les admins suppriment l'anniversaire d'un utilisateur
+@client.tree.command(name="suppanniv", description="Supprime l'anniversaire d'un utilisateur (admin uniquement).")
+async def suppanniv(interaction: discord.Interaction, member: discord.Member):
+    """
+    Supprime l'anniversaire d'un utilisateur.
+    Cette commande est réservée aux administrateurs.
+    """
+    if not is_admin(interaction):
+        await interaction.response.send_message("Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
+        return
+    if str(member.id) not in birthdays:
+        await interaction.response.send_message(f"Aucun anniversaire enregistré pour {member.mention}.", ephemeral=True)
+        return
+    removed_date = birthdays.pop(str(member.id))
+    save_birthdays(birthdays)
+    await interaction.response.send_message(f"L'anniversaire de {member.mention} ({removed_date}) a été supprimé.", ephemeral=True)
 
 app = Flask('')
 
