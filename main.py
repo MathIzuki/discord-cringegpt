@@ -12,8 +12,6 @@ from rapidfuzz import fuzz  # Pour le fuzzy matching (facultatif)
 from datetime import datetime, timedelta
 from flask import Flask
 from threading import Thread
-import os
-
 
 # Chargement des variables d'environnement
 load_dotenv()
@@ -22,17 +20,13 @@ BIRTHDAY_FILE = "birthdays.json"
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "0"))
-# ADMIN_ROLE_IDS sera désormais utilisé pour vérifier les permissions d'administration
 admin_role_ids_str = os.getenv("ADMIN_ROLE_IDS", "")
 ADMIN_ROLE_IDS = [int(x.strip()) for x in admin_role_ids_str.split(",") if x.strip().isdigit()]
 
-# URL de l'API OpenRouter pour les complétions de chat
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-# Chemin du fichier JSON contenant la liste des mots interdits
 FORBIDDEN_WORDS_FILE = "forbidden_words.json"
 
-# Fonctions pour charger et sauvegarder les mots interdits
+# --- Fonctions de chargement/sauvegarde ---
 def load_forbidden_words():
     try:
         with open(FORBIDDEN_WORDS_FILE, "r", encoding="utf-8") as f:
@@ -51,9 +45,7 @@ def save_forbidden_words(words):
     except Exception as e:
         print("Erreur lors de la sauvegarde de forbidden_words.json :", e, flush=True)
 
-# Chargement initial de la liste
 forbidden_words = load_forbidden_words()
-
 
 def load_birthdays():
     try:
@@ -73,75 +65,52 @@ def save_birthdays(birthdays):
     except Exception as e:
         print("Erreur lors de la sauvegarde de birthdays.json :", e, flush=True)
 
-# Chargement initial des anniversaires
 birthdays = load_birthdays()
 
-
-# Fonction de normalisation pour contrer l'obfuscation
+# --- Fonctions de normalisation et détection ---
 def normalize_text(text):
     text = text.lower()
-    substitutions = {
-        '0': 'o',
-        '1': 'i',  # remplace '1' par 'i'
-        '3': 'e',
-        '4': 'a',
-        '@': 'a',
-        '$': 's',
-        '5': 's',
-        '7': 't'
-    }
+    substitutions = {'0': 'o', '1': 'i', '3': 'e', '4': 'a', '@': 'a', '$': 's', '5': 's', '7': 't'}
     for k, v in substitutions.items():
         text = text.replace(k, v)
-    # Supprime la ponctuation (y compris les points)
     text = re.sub(r'[^\w\s]', '', text)
-    # Réduit les espaces multiples
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 def contains_forbidden_word(message_content):
     normalized_msg = normalize_text(message_content)
     msg_tokens = set(normalized_msg.split())
-    # On parcourt la liste des mots interdits
     for forbidden in forbidden_words:
         normalized_forbidden = normalize_text(forbidden)
         forb_tokens = set(normalized_forbidden.split())
-        # Vérifier que tous les mots de la phrase interdite apparaissent dans le message
         if not forb_tokens.issubset(msg_tokens):
             continue
         score = fuzz.token_set_ratio(normalized_forbidden, normalized_msg)
-        print(f"Comparaison: '{normalized_forbidden}' vs '{normalized_msg}' -> score {score}")  # pour debug
-        if score >= 80:  # Seuil ajustable
+        print(f"Comparaison: '{normalized_forbidden}' vs '{normalized_msg}' -> score {score}", flush=True)
+        if score >= 80:
             return True, forbidden, score
     return False, None, None
 
-# Configuration des intents
+# --- Client Discord et Intents ---
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
-
+intents.reactions = True
 client = discord.Client(intents=intents)
-client.tree = app_commands.CommandTree(client)  # Support des commandes slash
+client.tree = app_commands.CommandTree(client)
 
-# Vérification des permissions d'administration via les rôles
 def is_admin(interaction: discord.Interaction) -> bool:
     if interaction.user.guild_permissions.administrator:
         return True
     return any(role.id in ADMIN_ROLE_IDS for role in interaction.user.roles)
 
-### Modals pour récupérer les informations de modération ###
-
+# --- Modals et Vue de modération ---
 class KickBanModal(discord.ui.Modal, title="Modération - Raison"):
     def __init__(self, member: discord.Member, action: str):
         self.member = member
-        self.action = action  # "kick" ou "ban"
+        self.action = action
         super().__init__()
-        self.reason = discord.ui.TextInput(
-            label="Raison",
-            placeholder="Indiquez la raison ici...",
-            style=discord.TextStyle.short,
-            required=True,
-            max_length=100
-        )
+        self.reason = discord.ui.TextInput(label="Raison", placeholder="Indiquez la raison ici...", style=discord.TextStyle.short, required=True, max_length=100)
         self.add_item(self.reason)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -163,19 +132,8 @@ class TimeoutModal(discord.ui.Modal, title="Modération - Timeout"):
     def __init__(self, member: discord.Member):
         self.member = member
         super().__init__()
-        self.duration = discord.ui.TextInput(
-            label="Durée (minutes)",
-            placeholder="Entrez la durée en minutes",
-            style=discord.TextStyle.short,
-            required=True
-        )
-        self.reason = discord.ui.TextInput(
-            label="Raison",
-            placeholder="Indiquez la raison du timeout",
-            style=discord.TextStyle.short,
-            required=True,
-            max_length=100
-        )
+        self.duration = discord.ui.TextInput(label="Durée (minutes)", placeholder="Entrez la durée en minutes", style=discord.TextStyle.short, required=True)
+        self.reason = discord.ui.TextInput(label="Raison", placeholder="Indiquez la raison du timeout", style=discord.TextStyle.short, required=True, max_length=100)
         self.add_item(self.duration)
         self.add_item(self.reason)
 
@@ -192,7 +150,6 @@ class TimeoutModal(discord.ui.Modal, title="Modération - Timeout"):
         except Exception as e:
             await interaction.response.send_message(f"Erreur lors du timeout : {e}", ephemeral=True)
 
-# Vue de modération avec boutons (kick, timeout, ban)
 class ModerationView(discord.ui.View):
     def __init__(self, member: discord.Member):
         super().__init__(timeout=None)
@@ -213,7 +170,7 @@ class ModerationView(discord.ui.View):
         modal = KickBanModal(member=self.member, action="ban")
         await interaction.response.send_modal(modal)
 
-# Dictionnaire global de mémoire de conversation par serveur (ou DM)
+# --- Système de conversation ---
 conversation_histories = {}
 
 def get_system_message(author_id: int) -> str:
@@ -231,6 +188,7 @@ def get_system_message(author_id: int) -> str:
     )
     return base
 
+# --- Gestion des commandes et événements ---
 @client.event
 async def on_ready():
     await client.change_presence(activity=discord.Streaming(name="Mode cringe activé! UwU", url="https://twitch.tv/mathizuu"))
@@ -240,53 +198,39 @@ async def on_ready():
     except Exception as e:
         print("Erreur lors de la synchronisation des commandes slash :", e, flush=True)
     print(f"{client.user} est connecté et prêt.", flush=True)
+    asyncio.create_task(birthday_check())
 
 @client.event
 async def on_message(message: discord.Message):
     print(f"on_message déclenché: {message.author} a envoyé: {message.content}", flush=True)
-    
-    # Ne pas traiter les messages dans le salon admin
-    if message.channel.id == ADMIN_CHANNEL_ID:
-        return
-    if message.author.bot:
+    if message.channel.id == ADMIN_CHANNEL_ID or message.author.bot:
         return
 
-    # Utilisation de la détection fuzzy
     detected, forbidden, score = contains_forbidden_word(message.content)
     if detected:
         print(f"Mot interdit détecté: '{forbidden}' (score: {score}) dans le message: {message.content}", flush=True)
-        admin_channel = client.get_channel(ADMIN_CHANNEL_ID)
+        admin_channel = message.guild.get_channel(ADMIN_CHANNEL_ID) if message.guild else None
         if admin_channel is None:
             try:
                 admin_channel = await client.fetch_channel(ADMIN_CHANNEL_ID)
                 print(f"Channel admin récupéré via fetch: {admin_channel}", flush=True)
             except Exception as e:
                 print("Erreur lors du fetch du channel admin :", e, flush=True)
-        else:
-            print(f"Channel admin trouvé dans le cache: {admin_channel}", flush=True)
         if admin_channel:
             role_mentions = " ".join(f"<@&{role_id}>" for role_id in ADMIN_ROLE_IDS)
             alert_msg = f"Un mot interdit a été utilisé par {message.author.mention} dans le message:\n\"{message.content}\""
-            embed = discord.Embed(
-                title="Alerte : Mot Interdit Détecté",
-                description=alert_msg,
-                color=0xff0000  # Rouge
-            )
+            embed = discord.Embed(title="Alerte : Mot Interdit Détecté", description=alert_msg, color=0xff0000)
             view = ModerationView(member=message.author)
             await admin_channel.send(content=role_mentions, embed=embed, view=view)
         else:
             print("Channel admin introuvable.", flush=True)
-        return  # On ne traite plus le message
-
-    # Réponses spécifiques pour certains utilisateurs (chance aléatoire)
-    if message.author.id == 1105910259865878588 and random.randint(1, 40) == 1:
-        await message.channel.send("Sana, tais-toi !")
-        return
-    if message.author.id == 852611917310459995 and random.randint(1, 20) == 1:
-        await message.channel.send("Chama, ferme ta gueule sah")
         return
 
-    # Traitement de la conversation si le bot est mentionné
+    if message.author.id in [1105910259865878588, 852611917310459995]:
+        if random.randint(1, 40 if message.author.id==1105910259865878588 else 20) == 1:
+            await message.channel.send("Sana, tais-toi !" if message.author.id==1105910259865878588 else "Chama, ferme ta gueule sah")
+            return
+
     if client.user in message.mentions:
         content = re.sub(r"<@!?%s>" % client.user.id, "", message.content).strip()
         if not content:
@@ -298,7 +242,7 @@ async def on_message(message: discord.Message):
         conversation_histories[conv_key].append({"role": "user", "content": content})
         print(f"Message ajouté à la conversation {conv_key}: {content}", flush=True)
         payload = {
-            "model": "openai/gpt-4o",
+            "model": "gpt-4o",
             "messages": conversation_histories[conv_key],
             "max_tokens": 400,
             "temperature": 0.7
@@ -313,11 +257,8 @@ async def on_message(message: discord.Message):
             response = await asyncio.to_thread(requests.post, API_URL, headers=headers, data=json.dumps(payload))
             if response.status_code == 200:
                 data = response.json()
-                if "choices" in data and len(data["choices"]) > 0:
-                    if ("message" in data["choices"][0] and "content" in data["choices"][0]["message"]):
-                        answer = data["choices"][0]["message"]["content"]
-                    else:
-                        answer = "Aucune réponse générée par l'API."
+                if "choices" in data and len(data["choices"]) > 0 and "message" in data["choices"][0] and "content" in data["choices"][0]["message"]:
+                    answer = data["choices"][0]["message"]["content"]
                 else:
                     answer = "Aucune réponse générée par l'API."
             else:
@@ -330,110 +271,77 @@ async def on_message(message: discord.Message):
         allowed = discord.AllowedMentions(everyone=False, roles=False, users=True)
         await message.channel.send(answer, allowed_mentions=allowed)
 
-# Commandes slash pour gérer les mots interdits
+@client.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+    # Gestion globale des erreurs pour les commandes slash
+    if isinstance(error, discord.HTTPException) and error.status == 429:
+        await interaction.response.send_message("Trop de requêtes envoyées. Veuillez patienter quelques instants et réessayer.", ephemeral=True)
+    else:
+        print(f"Erreur dans une commande: {error}", flush=True)
+        # Pour les autres erreurs, vous pouvez renvoyer un message générique
+        try:
+            await interaction.response.send_message("Une erreur est survenue. Veuillez réessayer plus tard.", ephemeral=True)
+        except Exception:
+            pass
+
 @client.tree.command(name="addbanword", description="Ajoute un mot interdit à la base de données.")
 async def addbanword(interaction: discord.Interaction, word: str):
     if not is_admin(interaction):
-        embed = discord.Embed(
-            title="Erreur",
-            description="Vous n'avez pas la permission d'utiliser cette commande.",
-            color=discord.Color.red()
-        )
-        await interaction.response.send_message(embed=embed)
+        embed = discord.Embed(title="Erreur", description="Vous n'avez pas la permission d'utiliser cette commande.", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     global forbidden_words
     word = word.strip().lower()
     if word in forbidden_words:
-        embed = discord.Embed(
-            title="Mot interdit déjà présent",
-            description=f"Le mot '{word}' est déjà dans la liste.",
-            color=discord.Color.orange()
-        )
-        await interaction.response.send_message(embed=embed)
+        embed = discord.Embed(title="Mot interdit déjà présent", description=f"Le mot '{word}' est déjà dans la liste.", color=discord.Color.orange())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
         forbidden_words.append(word)
         save_forbidden_words(forbidden_words)
-        embed = discord.Embed(
-            title="Mot interdit ajouté",
-            description=f"Le mot '{word}' a été ajouté à la liste.",
-            color=discord.Color.green()
-        )
-        await interaction.response.send_message(embed=embed)
+        embed = discord.Embed(title="Mot interdit ajouté", description=f"Le mot '{word}' a été ajouté à la liste.", color=discord.Color.green())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @client.tree.command(name="removebanword", description="Supprime un mot interdit de la base de données.")
 async def removebanword(interaction: discord.Interaction, word: str):
     if not is_admin(interaction):
-        embed = discord.Embed(
-            title="Erreur",
-            description="Vous n'avez pas la permission d'utiliser cette commande.",
-            color=discord.Color.red()
-        )
-        await interaction.response.send_message(embed=embed)
+        embed = discord.Embed(title="Erreur", description="Vous n'avez pas la permission d'utiliser cette commande.", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     global forbidden_words
     word = word.strip().lower()
     if word in forbidden_words:
         forbidden_words.remove(word)
         save_forbidden_words(forbidden_words)
-        embed = discord.Embed(
-            title="Mot interdit supprimé",
-            description=f"Le mot '{word}' a été supprimé de la liste.",
-            color=discord.Color.green()
-        )
-        await interaction.response.send_message(embed=embed)
+        embed = discord.Embed(title="Mot interdit supprimé", description=f"Le mot '{word}' a été supprimé de la liste.", color=discord.Color.green())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        embed = discord.Embed(
-            title="Mot interdit introuvable",
-            description=f"Le mot '{word}' n'est pas dans la liste.",
-            color=discord.Color.orange()
-        )
-        await interaction.response.send_message(embed=embed)
+        embed = discord.Embed(title="Mot interdit introuvable", description=f"Le mot '{word}' n'est pas dans la liste.", color=discord.Color.orange())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @client.tree.command(name="listebanword", description="Affiche la liste des mots interdits.")
 async def listebanword(interaction: discord.Interaction):
     if forbidden_words:
         bullet_list = "\n".join(f"• {word}" for word in forbidden_words)
-        embed = discord.Embed(
-            title="Liste des mots interdits",
-            description=bullet_list,
-            color=discord.Color.red()
-        )
+        embed = discord.Embed(title="Liste des mots interdits", description=bullet_list, color=discord.Color.red())
     else:
-        embed = discord.Embed(
-            title="Liste des mots interdits",
-            description="La liste est vide.",
-            color=discord.Color.red()
-        )
-    await interaction.response.send_message(embed=embed)
+        embed = discord.Embed(title="Liste des mots interdits", description="La liste est vide.", color=discord.Color.red())
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @client.tree.command(name="rps", description="Joue à pierre-papier-ciseaux contre le bot.")
 async def rps(interaction: discord.Interaction, move: str):
     moves = ["pierre", "papier", "ciseaux"]
-    # Association des options à leurs emojis
-    emoji_mapping = {
-        "pierre": "🪨",
-        "papier": "🍃",
-        "ciseaux": "✂️"
-    }
-    
+    emoji_mapping = {"pierre": "🪨", "papier": "🍃", "ciseaux": "✂️"}
     user_move = move.lower()
     if user_move not in moves:
         await interaction.response.send_message("Choisissez entre pierre, papier ou ciseaux.", ephemeral=True)
         return
-
     bot_move = random.choice(moves)
-
-    # Détermination du résultat
     if user_move == bot_move:
         result = "Égalité !"
-    elif (user_move == "pierre" and bot_move == "ciseaux") or \
-         (user_move == "ciseaux" and bot_move == "papier") or \
-         (user_move == "papier" and bot_move == "pierre"):
+    elif (user_move == "pierre" and bot_move == "ciseaux") or (user_move == "ciseaux" and bot_move == "papier") or (user_move == "papier" and bot_move == "pierre"):
         result = "Tu as gagné !"
     else:
         result = "Tu as perdu !"
-
-    # Création de l'embed avec un design amélioré
     embed = discord.Embed(
         title="Pierre, Papier, Ciseaux",
         description="Choisis ton coup et affronte le bot !",
@@ -443,10 +351,8 @@ async def rps(interaction: discord.Interaction, move: str):
     embed.add_field(name="Choix du bot", value=f"{emoji_mapping[bot_move]} **{bot_move.capitalize()}**", inline=True)
     embed.add_field(name="Résultat", value=result, inline=False)
     embed.set_footer(text="Amuse-toi bien !")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    await interaction.response.send_message(embed=embed)
-
-    
 @client.tree.command(name="event", description="Crée un événement avec un compte à rebours jusqu'à la date prévue.")
 async def event(interaction: discord.Interaction, title: str, date: str, time: str, description: str):
     """
@@ -455,8 +361,8 @@ async def event(interaction: discord.Interaction, title: str, date: str, time: s
     """
     try:
         event_dt = datetime.strptime(f"{date} {time}", "%d/%m/%Y %H:%M")
-    except Exception as e:
-        await interaction.response.send_message("Format de date/heure invalide. Veuillez utiliser DD/MM/YYYY pour la date et HH:MM pour l'heure.", ephemeral=True)
+    except Exception:
+        await interaction.response.send_message("Format de date/heure invalide. Utilisez DD/MM/YYYY et HH:MM.", ephemeral=True)
         return
 
     now = datetime.now()
@@ -464,19 +370,14 @@ async def event(interaction: discord.Interaction, title: str, date: str, time: s
         delta = event_dt - now
         days = delta.days
         hours, remainder = divmod(delta.seconds, 3600)
-        minutes = remainder // 60  # Sans secondes
+        minutes = remainder // 60
         countdown = f"{days} jours, {hours} heures, {minutes} minutes"
     else:
         countdown = "L'événement a déjà eu lieu."
 
-    # Format d'affichage de la date en lettres (ex: "25 Mars 2025")
-    month_map = {
-        1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril", 5: "Mai", 6: "Juin",
-        7: "Juillet", 8: "Août", 9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre"
-    }
+    month_map = {1:"Janvier",2:"Février",3:"Mars",4:"Avril",5:"Mai",6:"Juin",7:"Juillet",8:"Août",9:"Septembre",10:"Octobre",11:"Novembre",12:"Décembre"}
     formatted_date = f"{event_dt.day} {month_map.get(event_dt.month, '')} {event_dt.year}"
     
-    # Création de l'embed avec titre mis en forme (gras et souligné)
     embed = discord.Embed(
         title=f"**__{title}__**",
         description=description,
@@ -487,7 +388,6 @@ async def event(interaction: discord.Interaction, title: str, date: str, time: s
     embed.add_field(name="Compte à rebours", value=countdown, inline=False)
     embed.set_footer(text="Réagissez avec ✅ pour vous inscrire ou ❌ pour refuser.")
     
-    # Toujours utiliser l'image située dans images/event.png
     try:
         file = discord.File("images/event.png", filename="event.png")
         embed.set_image(url="attachment://event.png")
@@ -502,9 +402,7 @@ async def event(interaction: discord.Interaction, title: str, date: str, time: s
     event_message = await interaction.original_response()
     await event_message.add_reaction("✅")
     await event_message.add_reaction("❌")
-
-
-    # Mise à jour périodique du compte à rebours (toutes les 10 minutes)
+    
     async def update_countdown():
         while True:
             now = datetime.now()
@@ -527,9 +425,32 @@ async def event(interaction: discord.Interaction, title: str, date: str, time: s
                 await event_message.edit(embed=embed)
             except Exception as e:
                 print(f"Erreur lors de la mise à jour du compte à rebours: {e}", flush=True)
-            await asyncio.sleep(600)  # Mise à jour toutes les 10 minutes
+            await asyncio.sleep(600)
+    asyncio.create_task(update_countdown())
 
-    client.loop.create_task(update_countdown())
+@client.tree.command(name="poll", description="Crée un sondage interactif.")
+async def poll(interaction: discord.Interaction, question: str, options: str):
+    option_list = [option.strip() for option in options.split(",") if option.strip()]
+    if len(option_list) < 2:
+        await interaction.response.send_message("Vous devez fournir au moins 2 options pour le sondage.", ephemeral=True)
+        return
+    if len(option_list) > 10:
+        await interaction.response.send_message("Vous pouvez fournir un maximum de 10 options.", ephemeral=True)
+        return
+    number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    embed = discord.Embed(
+        title="Sondage",
+        description=question,
+        color=0x3498db
+    )
+    options_text = "\n".join([f"{number_emojis[i]} {option}" for i, option in enumerate(option_list)])
+    embed.add_field(name="Options", value=options_text, inline=False)
+    embed.set_footer(text="Réagissez avec l'emoji correspondant à votre choix.")
+    await interaction.response.send_message(embed=embed)
+    poll_message = await interaction.original_response()
+    for i in range(len(option_list)):
+        await poll_message.add_reaction(number_emojis[i])
+
 
 @client.tree.command(name="amour", description="Calcule la probabilité d'amour entre deux personnes.")
 async def amour(interaction: discord.Interaction, pseudo1: str, pseudo2: str):
@@ -547,34 +468,22 @@ async def amour(interaction: discord.Interaction, pseudo1: str, pseudo2: str):
     else:
         comment = "Ça risque de manquer d'amour..."
     response_text = f"La probabilité d'amour entre **{pseudo1}** et **{pseudo2}** est de **{prob}%**. {comment}"
-    await interaction.response.send_message(response_text)
+    await interaction.response.send_message(response_text, ephemeral=True)
 
 
-# Commande slash /ajoutanniv pour que l'utilisateur ajoute son anniversaire
 @client.tree.command(name="ajoutanniv", description="Ajoute votre anniversaire. Format: DD/MM/YYYY")
 async def ajoutanniv(interaction: discord.Interaction, date: str):
-    """
-    Enregistre l'anniversaire de l'utilisateur qui exécute la commande.
-    Format attendu pour la date : DD/MM/YYYY.
-    """
     try:
-        # On vérifie le format de la date
         birth_dt = datetime.strptime(date, "%d/%m/%Y")
-    except Exception as e:
+    except Exception:
         await interaction.response.send_message("Format de date invalide. Utilisez DD/MM/YYYY.", ephemeral=True)
         return
-    # Enregistrer l'anniversaire sous la clé de l'ID de l'utilisateur
     birthdays[str(interaction.user.id)] = date
     save_birthdays(birthdays)
     await interaction.response.send_message(f"Votre anniversaire ({date}) a été ajouté avec succès !", ephemeral=True)
 
-# Commande slash /suppanniv pour que les admins suppriment l'anniversaire d'un utilisateur
 @client.tree.command(name="suppanniv", description="Supprime l'anniversaire d'un utilisateur (admin uniquement).")
 async def suppanniv(interaction: discord.Interaction, member: discord.Member):
-    """
-    Supprime l'anniversaire d'un utilisateur.
-    Cette commande est réservée aux administrateurs.
-    """
     if not is_admin(interaction):
         await interaction.response.send_message("Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
         return
@@ -584,46 +493,44 @@ async def suppanniv(interaction: discord.Interaction, member: discord.Member):
     removed_date = birthdays.pop(str(member.id))
     save_birthdays(birthdays)
     await interaction.response.send_message(f"L'anniversaire de {member.mention} ({removed_date}) a été supprimé.", ephemeral=True)
+
 @client.tree.command(name="listeanniversaire", description="Affiche la liste de tous les anniversaires enregistrés, triés par prochain anniversaire.")
 async def listeanniversaire(interaction: discord.Interaction):
     if not is_admin(interaction):
         await interaction.response.send_message("Vous n'avez pas la permission d'utiliser cette commande.", ephemeral=True)
         return
-
     global birthdays
-    birthdays = load_birthdays()  # Recharge les données à jour
+    birthdays = load_birthdays()
     if not birthdays:
         await interaction.response.send_message("Aucun anniversaire n'a été enregistré.", ephemeral=True)
         return
 
     today = datetime.today()
-    # Construire une liste avec le prochain anniversaire de chaque utilisateur
     sorted_birthdays = []
     for user_id, birth_date in birthdays.items():
         try:
             bdate = datetime.strptime(birth_date, "%d/%m/%Y")
-        except Exception as e:
+        except Exception:
             continue
-        # Calculer le prochain anniversaire
         next_birthday = bdate.replace(year=today.year)
         if next_birthday < today:
             next_birthday = bdate.replace(year=today.year + 1)
         sorted_birthdays.append((user_id, birth_date, next_birthday))
     
-    # Trier la liste par date du prochain anniversaire
     sorted_birthdays.sort(key=lambda x: x[2])
     
     description = ""
     for user_id, birth_date, next_birthday in sorted_birthdays:
-        days_until = (next_birthday - today).days
-        description += f"<@{user_id}> : {birth_date} (dans {days_until + 1} jours)\n"
+        days_until = (next_birthday - today).days + 1
+        description += f"<@{user_id}> : {birth_date} (dans {days_until} jours)\n"
     
     embed = discord.Embed(
-        title="Liste des anniversaires",
+        title="Liste des anniversaires (triée par prochain anniversaire)",
         description=description,
         color=0x3498db
     )
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 # Tâche d'anniversaire : vérifie quotidiennement et envoie un message dans le salon dédié
 async def birthday_check():
@@ -640,7 +547,6 @@ async def birthday_check():
     while not client.is_closed():
         now = datetime.now()
         today_dm = now.strftime("%d/%m")
-        # Réinitialiser la liste des annonces si la date change
         if last_dm != today_dm:
             announced_today = set()
             last_dm = today_dm
@@ -658,16 +564,14 @@ async def birthday_check():
                     announced_today.add(user_id)
                 except Exception as e:
                     print(f"Erreur lors de l'envoi du message d'anniversaire pour <@{user_id}>: {e}", flush=True)
-        await asyncio.sleep(60)  # Vérification toutes les minutes
+        await asyncio.sleep(60)
 
 @client.event
 async def on_ready():
-    print(f"{client.user} est connecté et prêt.")
+    print(f"{client.user} est connecté et prêt.", flush=True)
     asyncio.create_task(birthday_check())
 
-
-
-
+# --- Flask keep_alive ---
 app = Flask('')
 
 @app.route('/')
@@ -683,4 +587,3 @@ def keep_alive():
 
 keep_alive()
 client.run(DISCORD_TOKEN)
-
