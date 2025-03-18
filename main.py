@@ -610,6 +610,26 @@ async def suppanniv(interaction: discord.Interaction, member: discord.Member):
     save_birthdays(birthdays)
     await interaction.response.send_message(f"L'anniversaire de {member.mention} ({removed_date}) a été supprimé.", ephemeral=True)
 
+@client.tree.command(name="listeanniversaire", description="Affiche la liste de tous les anniversaires enregistrés.")
+async def listeanniversaire(interaction: discord.Interaction):
+    # Recharge les données des anniversaires depuis le fichier pour être à jour
+    global birthdays
+    birthdays = load_birthdays()
+    if not birthdays:
+        await interaction.response.send_message("Aucun anniversaire n'a été enregistré.", ephemeral=True)
+        return
+
+    description = ""
+    for user_id, birth_date in birthdays.items():
+        description += f"<@{user_id}> : {birth_date}\n"
+        
+    embed = discord.Embed(
+        title="Liste des anniversaires",
+        description=description,
+        color=0x3498db
+    )
+    await interaction.response.send_message(embed=embed)
+
 app = Flask('')
 
 @app.route('/')
