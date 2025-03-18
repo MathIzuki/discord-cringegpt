@@ -21,7 +21,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "0"))
 admin_role_ids_str = os.getenv("ADMIN_ROLE_IDS", "")
-ADMIN_ROLE_IDS = [int(x.strip()) for x in admin_role_ids_str.split(",") if x.strip().isdigit()]
+ADMIN_ROLE_IDS = [int(x.strip()) for x in admin_role_ids_str.split(",") if x.strip()]
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 FORBIDDEN_WORDS_FILE = "forbidden_words.json"
@@ -227,8 +227,10 @@ async def on_message(message: discord.Message):
         return
 
     if message.author.id in [1105910259865878588, 852611917310459995]:
-        if random.randint(1, 40 if message.author.id==1105910259865878588 else 20) == 1:
-            await message.channel.send("Sana, tais-toi !" if message.author.id==1105910259865878588 else "Chama, ferme ta gueule sah")
+        chance = 40 if message.author.id == 1105910259865878588 else 20
+        if random.randint(1, chance) == 1:
+            msg = "Sana, tais-toi !" if message.author.id == 1105910259865878588 else "Chama, ferme ta gueule sah"
+            await message.channel.send(msg)
             return
 
     if client.user in message.mentions:
@@ -273,12 +275,10 @@ async def on_message(message: discord.Message):
 
 @client.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
-    # Gestion globale des erreurs pour les commandes slash
     if isinstance(error, discord.HTTPException) and error.status == 429:
         await interaction.response.send_message("Trop de requêtes envoyées. Veuillez patienter quelques instants et réessayer.", ephemeral=True)
     else:
         print(f"Erreur dans une commande: {error}", flush=True)
-        # Pour les autres erreurs, vous pouvez renvoyer un message générique
         try:
             await interaction.response.send_message("Une erreur est survenue. Veuillez réessayer plus tard.", ephemeral=True)
         except Exception:
@@ -375,7 +375,8 @@ async def event(interaction: discord.Interaction, title: str, date: str, time: s
     else:
         countdown = "L'événement a déjà eu lieu."
 
-    month_map = {1:"Janvier",2:"Février",3:"Mars",4:"Avril",5:"Mai",6:"Juin",7:"Juillet",8:"Août",9:"Septembre",10:"Octobre",11:"Novembre",12:"Décembre"}
+    month_map = {1:"Janvier", 2:"Février", 3:"Mars", 4:"Avril", 5:"Mai", 6:"Juin",
+                 7:"Juillet", 8:"Août", 9:"Septembre", 10:"Octobre", 11:"Novembre", 12:"Décembre"}
     formatted_date = f"{event_dt.day} {month_map.get(event_dt.month, '')} {event_dt.year}"
     
     embed = discord.Embed(
@@ -428,6 +429,7 @@ async def event(interaction: discord.Interaction, title: str, date: str, time: s
             await asyncio.sleep(600)
     asyncio.create_task(update_countdown())
 
+
 @client.tree.command(name="poll", description="Crée un sondage interactif.")
 async def poll(interaction: discord.Interaction, question: str, options: str):
     option_list = [option.strip() for option in options.split(",") if option.strip()]
@@ -470,7 +472,6 @@ async def amour(interaction: discord.Interaction, pseudo1: str, pseudo2: str):
     response_text = f"La probabilité d'amour entre **{pseudo1}** et **{pseudo2}** est de **{prob}%**. {comment}"
     await interaction.response.send_message(response_text, ephemeral=True)
 
-
 @client.tree.command(name="ajoutanniv", description="Ajoute votre anniversaire. Format: DD/MM/YYYY")
 async def ajoutanniv(interaction: discord.Interaction, date: str):
     try:
@@ -504,7 +505,6 @@ async def listeanniversaire(interaction: discord.Interaction):
     if not birthdays:
         await interaction.response.send_message("Aucun anniversaire n'a été enregistré.", ephemeral=True)
         return
-
     today = datetime.today()
     sorted_birthdays = []
     for user_id, birth_date in birthdays.items():
@@ -516,14 +516,11 @@ async def listeanniversaire(interaction: discord.Interaction):
         if next_birthday < today:
             next_birthday = bdate.replace(year=today.year + 1)
         sorted_birthdays.append((user_id, birth_date, next_birthday))
-    
     sorted_birthdays.sort(key=lambda x: x[2])
-    
     description = ""
     for user_id, birth_date, next_birthday in sorted_birthdays:
         days_until = (next_birthday - today).days + 1
         description += f"<@{user_id}> : {birth_date} (dans {days_until} jours)\n"
-    
     embed = discord.Embed(
         title="Liste des anniversaires (triée par prochain anniversaire)",
         description=description,
@@ -531,8 +528,7 @@ async def listeanniversaire(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
-# Tâche d'anniversaire : vérifie quotidiennement et envoie un message dans le salon dédié
+# --- Tâche d'anniversaire ---
 async def birthday_check():
     await client.wait_until_ready()
     channel = client.get_channel(BIRTHDAY_CHANNEL_ID)
@@ -586,4 +582,17 @@ def keep_alive():
     t.start()
 
 keep_alive()
-client.run(DISCORD_TOKEN)
+
+async def main():
+    while True:
+        try:
+            await client.start(DISCORD_TOKEN)
+            break
+        except discord.errors.HTTPException as e:
+            if e.status == 429:
+                print("Rate limited lors du login. Attente de 60 secondes avant de réessayer...", flush=True)
+                await asyncio.sleep(60)
+            else:
+                raise e
+
+asyncio.run(main())
