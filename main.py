@@ -392,6 +392,21 @@ async def rps(interaction: discord.Interaction, move: str):
     embed.set_footer(text="Amuse-toi bien !")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+@client.tree.command(name="help", description="Affiche la liste de toutes les commandes disponibles, y compris les commandes admin.")
+async def help(interaction: discord.Interaction):
+    # Récupère toutes les commandes enregistrées dans l'arbre
+    cmds = client.tree.get_commands()
+    help_text = ""
+    for cmd in cmds:
+        help_text += f"**/{cmd.name}**: {cmd.description}\n"
+    embed = discord.Embed(
+        title="Aide des commandes",
+        description=help_text,
+        color=discord.Color.blue()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @client.tree.command(name="event", description="Crée un événement avec un compte à rebours jusqu'à la date prévue.")
 async def event(interaction: discord.Interaction, title: str, date: str, time: str, description: str):
     """
