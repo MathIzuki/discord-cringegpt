@@ -19,6 +19,12 @@ BIRTHDAY_CHANNEL_ID = int(os.getenv("BIRTHDAY_CHANNEL_ID", "0"))
 BIRTHDAY_FILE = "birthdays.json"
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+# On récupère éventuellement plusieurs clés via OPENROUTER_API_KEYS
+if os.getenv("OPENROUTER_API_KEYS"):
+    OPENROUTER_API_KEYS = [key.strip() for key in os.getenv("OPENROUTER_API_KEYS").split(",") if key.strip()]
+else:
+    OPENROUTER_API_KEYS = [OPENROUTER_API_KEY]
+    
 ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "0"))
 admin_role_ids_str = os.getenv("ADMIN_ROLE_IDS", "")
 ADMIN_ROLE_IDS = [int(x.strip()) for x in admin_role_ids_str.split(",") if x.strip()]
@@ -188,6 +194,48 @@ def get_system_message(author_id: int) -> str:
     )
     return base
 
+# --- Appels à l'API OpenRouter avec rotation des clés ---
+async def call_openrouter_api(payload):
+    for key in OPENROUTER_API_KEYS:
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://votresite.com",
+            "X-Title": "MonSiteKawaii"
+        }
+        try:
+            response = await asyncio.to_thread(requests.post, API_URL, headers=headers, data=json.dumps(payload))
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 429:
+                print(f"Clé {key} rate limited, tentative avec la suivante...", flush=True)
+                continue  # Essayer la prochaine clé
+            else:
+                print(f"Erreur API avec la clé {key}: {response.status_code} - {response.text}", flush=True)
+        except Exception as e:
+            print(f"Erreur lors de l'appel avec la clé {key}: {e}", flush=True)
+    return None
+
+# --- Troncature de l'historique de conversation ---
+def truncate_conversation(conv):
+    # Garder le message système (index 0) + les 5 derniers messages
+    if len(conv) > 6:
+        return [conv[0]] + conv[-5:]
+    return conv
+
+# --- Client Discord et Intents ---
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
+intents.reactions = True
+client = discord.Client(intents=intents)
+client.tree = app_commands.CommandTree(client)
+
+def is_admin(interaction: discord.Interaction) -> bool:
+    if interaction.user.guild_permissions.administrator:
+        return True
+    return any(role.id in ADMIN_ROLE_IDS for role in interaction.user.roles)
+
 # --- Gestion des commandes et événements ---
 @client.event
 async def on_ready():
@@ -242,6 +290,8 @@ async def on_message(message: discord.Message):
             conversation_histories[conv_key] = [{"role": "system", "content": get_system_message(message.author.id)}]
             print(f"Nouvelle conversation initialisée pour {conv_key}", flush=True)
         conversation_histories[conv_key].append({"role": "user", "content": content})
+        # Conserver uniquement le système + les 5 derniers messages
+        conversation_histories[conv_key] = truncate_conversation(conversation_histories[conv_key])
         print(f"Message ajouté à la conversation {conv_key}: {content}", flush=True)
         payload = {
             "model": "gpt-4o",
@@ -249,27 +299,15 @@ async def on_message(message: discord.Message):
             "max_tokens": 400,
             "temperature": 0.7
         }
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://votresite.com",
-            "X-Title": "MonSiteKawaii"
-        }
-        try:
-            response = await asyncio.to_thread(requests.post, API_URL, headers=headers, data=json.dumps(payload))
-            if response.status_code == 200:
-                data = response.json()
-                if "choices" in data and len(data["choices"]) > 0 and "message" in data["choices"][0] and "content" in data["choices"][0]["message"]:
-                    answer = data["choices"][0]["message"]["content"]
-                else:
-                    answer = "Aucune réponse générée par l'API."
-            else:
-                answer = f"Erreur de l'API OpenRouter : {response.status_code} - {response.text}"
-            print("Réponse de l'API obtenue:", answer, flush=True)
-        except Exception as e:
-            answer = f"Erreur lors de l'appel à l'API : {e}"
-            print(answer, flush=True)
+        data = await call_openrouter_api(payload)
+        if data and "choices" in data and len(data["choices"]) > 0 and "message" in data["choices"][0] and "content" in data["choices"][0]["message"]:
+            answer = data["choices"][0]["message"]["content"]
+        else:
+            answer = "Actuellement en pause, je reviens plus tard 🚀💖"
+        print("Réponse de l'API obtenue:", answer, flush=True)
         conversation_histories[conv_key].append({"role": "assistant", "content": answer})
+        # Conserver aussi uniquement les 5 derniers échanges
+        conversation_histories[conv_key] = truncate_conversation(conversation_histories[conv_key])
         allowed = discord.AllowedMentions(everyone=False, roles=False, users=True)
         await message.channel.send(answer, allowed_mentions=allowed)
 
@@ -284,6 +322,7 @@ async def on_app_command_error(interaction: discord.Interaction, error):
         except Exception:
             pass
 
+# --- Commandes Slash ---
 @client.tree.command(name="addbanword", description="Ajoute un mot interdit à la base de données.")
 async def addbanword(interaction: discord.Interaction, word: str):
     if not is_admin(interaction):
@@ -429,7 +468,6 @@ async def event(interaction: discord.Interaction, title: str, date: str, time: s
             await asyncio.sleep(600)
     asyncio.create_task(update_countdown())
 
-
 @client.tree.command(name="poll", description="Crée un sondage interactif.")
 async def poll(interaction: discord.Interaction, question: str, options: str):
     option_list = [option.strip() for option in options.split(",") if option.strip()]
@@ -452,7 +490,6 @@ async def poll(interaction: discord.Interaction, question: str, options: str):
     poll_message = await interaction.original_response()
     for i in range(len(option_list)):
         await poll_message.add_reaction(number_emojis[i])
-
 
 @client.tree.command(name="amour", description="Calcule la probabilité d'amour entre deux personnes.")
 async def amour(interaction: discord.Interaction, pseudo1: str, pseudo2: str):
@@ -583,11 +620,12 @@ def keep_alive():
 
 keep_alive()
 
+# --- Lancement du client avec gestion de rate limits lors du login ---
 async def main():
     while True:
         try:
             await client.start(DISCORD_TOKEN)
-            break
+            break  # Sort si le client s'arrête normalement.
         except discord.errors.HTTPException as e:
             if e.status == 429:
                 print("Rate limited lors du login. Attente de 60 secondes avant de réessayer...", flush=True)
